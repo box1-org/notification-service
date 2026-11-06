@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
+import jakarta.annotation.security.PermitAll;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -11,6 +12,8 @@ import jakarta.ws.rs.core.MediaType;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 
+/** Golden Path smoke endpoint: anonymous by design for the release smoke task (box1-docs#40). */
+@PermitAll
 @Path("/api/info")
 @Produces(MediaType.APPLICATION_JSON)
 public class InfoResource {
