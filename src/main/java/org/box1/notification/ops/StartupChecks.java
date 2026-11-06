@@ -30,4 +30,35 @@ public class StartupChecks {
         }
         LOG.infov("Events floor {0}; provider {1}", floor, provider);
     }
+
+    /**
+     * The dead-letter topic must exist before records are consumed; otherwise the broker may auto-create it with the
+     * wrong partitions and retention, or a failing dead-letter send stalls the channel (messaging review 4). A reachable
+     * broker without it stops startup. An unreachable broker does not: Kafka is deliberately not a startup dependency.
+     */
+    void checkDeadLetterTopic(@Observes StartupEvent event,
+            @ConfigProperty(name = "kafka.bootstrap.servers") String bootstrap,
+            @ConfigProperty(name = "notification.dlq.topic") String topic,
+            @ConfigProperty(name = "notification.startup.check-dlq-topic") boolean enabled) {
+        if (!enabled) {
+            return;
+        }
+        java.util.Properties config = new java.util.Properties();
+        config.put(org.apache.kafka.clients.admin.AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
+        config.put(org.apache.kafka.clients.admin.AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 5000);
+        config.put(org.apache.kafka.clients.admin.AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 8000);
+        try (org.apache.kafka.clients.admin.Admin admin = org.apache.kafka.clients.admin.Admin.create(config)) {
+            admin.describeTopics(java.util.List.of(topic)).allTopicNames().get(10, java.util.concurrent.TimeUnit.SECONDS);
+            LOG.infov("Dead-letter topic {0} exists", topic);
+        } catch (java.util.concurrent.ExecutionException error) {
+            if (error.getCause() instanceof org.apache.kafka.common.errors.UnknownTopicOrPartitionException) {
+                throw new IllegalStateException("Dead-letter topic " + topic + " does not exist; create it before deploying");
+            }
+            LOG.warnv("Could not check the dead-letter topic: {0}", error.getCause().getClass().getSimpleName());
+        } catch (java.util.concurrent.TimeoutException error) {
+            LOG.warn("Could not check the dead-letter topic: Kafka did not answer in time");
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        }
+    }
 }

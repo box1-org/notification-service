@@ -18,6 +18,7 @@ public class NotificationMetrics {
     private final NotificationStore store;
     private final AtomicReference<NotificationStore.Snapshot> snapshot =
             new AtomicReference<>(new NotificationStore.Snapshot(0, 0, 0, 0));
+    private final java.util.concurrent.atomic.AtomicLong snapshotAt = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
 
     public NotificationMetrics(MeterRegistry registry, NotificationStore store) {
         this.registry = registry;
@@ -26,16 +27,31 @@ public class NotificationMetrics {
                 .description("Notifications not yet delivered or failed").strongReference(true).register(registry);
         Gauge.builder("box1.notification.oldest.pending.age.seconds", snapshot, s -> s.get().oldestPendingAgeSeconds())
                 .description("Age of the oldest notification not yet delivered or failed").strongReference(true).register(registry);
-        Gauge.builder("box1.outbox.pending", snapshot, s -> s.get().outboxPending())
+        Gauge.builder("box1.notification.outbox.pending", snapshot, s -> s.get().outboxPending())
                 .description("Notification events not yet confirmed by the broker").strongReference(true).register(registry);
-        Gauge.builder("box1.outbox.oldest.pending.age.seconds", snapshot, s -> s.get().outboxOldestAgeSeconds())
+        Gauge.builder("box1.notification.outbox.oldest.pending.age.seconds", snapshot, s -> s.get().outboxOldestAgeSeconds())
                 .description("Age of the oldest unpublished notification event").strongReference(true).register(registry);
+        // The gauges above keep their last value while the database is down; this shows how stale they are.
+        Gauge.builder("box1.notification.metrics.snapshot.age.seconds", snapshotAt,
+                at -> (System.nanoTime() - at.get()) / 1e9).description("Seconds since the pending gauges were refreshed")
+                .strongReference(true).register(registry);
+    }
+
+    /** Counters an alert uses with increase() exist from the start, so the first occurrence is not missed. */
+    @jakarta.annotation.PostConstruct
+    void preRegister() {
+        for (String category : new String[] {"RETRIES_EXHAUSTED", "PERMANENT_REJECTION"}) {
+            Counter.builder("box1.notification.failed").tag("category", category).register(registry);
+        }
+        Counter.builder("box1.notification.delivered").register(registry);
+        Counter.builder("box1.notification.outbox.publish.failures").register(registry);
     }
 
     @Scheduled(every = "${notification.metrics.refresh-interval}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void refresh() {
         try {
             snapshot.set(store.snapshot());
+            snapshotAt.set(System.nanoTime());
         } catch (StoreException error) {
             // Keep the last snapshot; readiness reports the database.
         }
@@ -63,12 +79,12 @@ public class NotificationMetrics {
     }
 
     public void published(double lagSeconds) {
-        Counter.builder("box1.outbox.published").register(registry).increment();
-        DistributionSummary.builder("box1.outbox.publish.lag.seconds").register(registry).record(lagSeconds);
+        Counter.builder("box1.notification.outbox.published").register(registry).increment();
+        DistributionSummary.builder("box1.notification.outbox.publish.lag.seconds").register(registry).record(lagSeconds);
     }
 
     public void publishFailed() {
-        Counter.builder("box1.outbox.publish.failures").register(registry).increment();
+        Counter.builder("box1.notification.outbox.publish.failures").register(registry).increment();
     }
 
     public void faultControl(String action, String outcome) {

@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.box1.notification.domain.InboundEvent;
 import org.box1.notification.domain.PoisonEventException;
+import org.box1.notification.domain.UnknownEventTypeException;
 
 /**
  * Checks inbound records against the box1-ops-contracts v1 rules and keeps only allowlisted fields (decision D-012).
@@ -24,6 +25,10 @@ public class EventParser {
             InboundEvent.FULFILLMENT_REQUESTED, InboundEvent.STATE_CHANGED);
     public static final Set<String> FULFILLMENT_TOPIC_TYPES = Set.of(InboundEvent.SHIPMENT_CONFIRMED,
             InboundEvent.SHIPMENT_FAILED);
+    /** Every type this service understands, used when replaying dead letters whose source topic may have been wrong. */
+    public static final Set<String> ALL_TYPES = Set.of(InboundEvent.ORDER_PLACED, InboundEvent.FULFILLMENT_REQUESTED,
+            InboundEvent.STATE_CHANGED, InboundEvent.SHIPMENT_CONFIRMED, InboundEvent.SHIPMENT_FAILED);
+    private static final Pattern EVENT_TYPE = Pattern.compile("^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*\\.v[1-9][0-9]*$");
 
     private static final Pattern ORDER = Pattern.compile("^ord_[A-Za-z0-9_-]{1,124}$");
     private static final Pattern FULFILLMENT = Pattern.compile("^ful_[A-Za-z0-9_-]{1,124}$");
@@ -50,8 +55,12 @@ public class EventParser {
             throw new PoisonEventException("Unsupported schemaVersion");
         }
         UUID eventId = uuid(root);
-        String type = text(root, "eventType");
+        String type = matching(root, "eventType", EVENT_TYPE);
+        if (!ALL_TYPES.contains(type)) {
+            throw new UnknownEventTypeException();
+        }
         if (!allowedTypes.contains(type)) {
+            // A known type on a topic that does not carry it: a routing error, kept for replay.
             throw new PoisonEventException("Unsupported eventType");
         }
         String aggregateId = bounded(root, "aggregateId");

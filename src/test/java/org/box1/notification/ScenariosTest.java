@@ -226,12 +226,12 @@ class ScenariosTest {
         assertEquals("Record value is not valid JSON", Harness.header(dead.get(0), "dead-letter-reason"));
         assertEquals("Unsupported eventType", Harness.header(dead.get(1), "dead-letter-reason"));
         assertTrue(Harness.notifications(key).isEmpty());
-        // Replay (docs/runbook.md): the unchanged key and value, twice to show the replay is duplicate-safe.
-        Harness.send(FULFILLMENT_TOPIC, dead.get(1).key(), dead.get(1).value());
-        Harness.send(FULFILLMENT_TOPIC, dead.get(1).key(), dead.get(1).value());
-        List<Map<String, Object>> rows = Harness.terminal(key, 1);
-        assertEquals(1, rows.size());
-        assertEquals("DELIVERED", rows.get(0).get("status"));
+        // A well-formed event of a type this service does not know is acknowledged, not dead-lettered.
+        String unknown = Events.stateChanged(key, "SUBMITTED", "RESERVED", "OK").put("eventType", "order.archived.v1").toString();
+        Harness.send(ORDER_TOPIC, key, unknown);
+        Harness.await("unknown type counted", Duration.ofSeconds(20), () -> given().when().get("/q/metrics").asString(),
+                m -> m.contains("outcome=\"ignored_unknown_type\""));
+        assertEquals(2, Harness.read(Harness.DLQ_TOPIC, key, 3, Duration.ofSeconds(5)).size());
     }
 
     @Test
@@ -318,6 +318,14 @@ class ScenariosTest {
         assertTrue(refused.size() >= invalid.length);
         assertTrue(refused.stream().allMatch(r -> "op-faults".equals(r.get("actor"))));
         assertFalse(Harness.rows("SELECT 1 FROM stub_fault_audit WHERE outcome = 'REFUSED_INVALID_TTL'").isEmpty());
+        assertTrue(Harness.rows("SELECT actor_subject FROM stub_fault_audit WHERE outcome LIKE 'REFUSED_%'").stream()
+                .allMatch(r -> "op-faults".equals(r.get("actor_subject"))));
+        // Refused before the handler (wrong role, no token): audited as well.
+        given().auth().oauth2(TestTokens.reader()).contentType(ContentType.JSON)
+                .body("{\"mode\":\"TRANSIENT_503\",\"ttlSeconds\":60}").when().post("/api/v1/stub/faults").then().statusCode(403);
+        given().when().delete("/api/v1/stub/faults").then().statusCode(401);
+        assertEquals(1L, Harness.count("SELECT count(*) FROM stub_fault_audit WHERE outcome = 'DENIED_FORBIDDEN' AND actor = 'op-reader'"));
+        assertEquals(1L, Harness.count("SELECT count(*) FROM stub_fault_audit WHERE outcome = 'DENIED_UNAUTHENTICATED' AND actor = 'anonymous'"));
     }
 
     @Test
@@ -377,8 +385,9 @@ class ScenariosTest {
         String metrics = given().when().get("/q/metrics").then().statusCode(200).extract().asString();
         for (String name : new String[] {"box1_notification_pending", "box1_notification_oldest_pending_age_seconds",
             "box1_notification_delivery_attempts_total", "box1_notification_delivered_total",
-            "box1_notification_failed_total{category=\"RETRIES_EXHAUSTED\"", "box1_outbox_pending",
-            "box1_notification_events_consumed_total"}) {
+            "box1_notification_failed_total{category=\"RETRIES_EXHAUSTED\"",
+            "box1_notification_events_consumed_total", "box1_notification_outbox_pending",
+            "box1_notification_metrics_snapshot_age_seconds"}) {
             assertTrue(metrics.contains(name), name + " missing; box1 lines: " + java.util.Arrays.stream(metrics.split("\n"))
                     .filter(l -> l.startsWith("box1_")).toList());
         }

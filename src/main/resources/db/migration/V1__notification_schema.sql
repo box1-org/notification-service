@@ -91,6 +91,7 @@ CREATE TABLE outbox (
 );
 CREATE INDEX ix_outbox_unpublished ON outbox (seq) WHERE published_at IS NULL;
 CREATE INDEX ix_outbox_aggregate_unpublished ON outbox (aggregate_id, seq) WHERE published_at IS NULL;
+CREATE INDEX ix_outbox_published ON outbox (published_at) WHERE published_at IS NOT NULL;
 
 -- The stub provider's single active fault, if any. Expiry is compared with database time.
 CREATE TABLE stub_fault (
@@ -108,7 +109,8 @@ CREATE TABLE stub_fault_audit (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     at          timestamptz NOT NULL DEFAULT now(),
     actor       text NOT NULL,
-    action      text NOT NULL CHECK (action IN ('SET', 'CLEAR', 'EXPIRED', 'EXHAUSTED')),
+    actor_subject text NULL,
+    action      text NOT NULL CHECK (action IN ('SET', 'CLEAR', 'EXPIRED', 'EXHAUSTED', 'DENIED')),
     mode        text NULL,
     ttl_seconds integer NULL,
     outcome     text NOT NULL,

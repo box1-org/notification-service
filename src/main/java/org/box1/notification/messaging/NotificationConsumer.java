@@ -20,6 +20,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.box1.notification.IntentService;
 import org.box1.notification.domain.InboundEvent;
 import org.box1.notification.domain.PoisonEventException;
+import org.box1.notification.domain.UnknownEventTypeException;
 import org.box1.notification.ops.NotificationMetrics;
 import org.box1.notification.store.StoreException;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -72,18 +73,36 @@ public class NotificationConsumer {
 
     @Incoming("order-events")
     @Blocking
-    void onOrderEvent(ConsumerRecord<String, byte[]> record) {
+    void onOrderEvent(ConsumerRecord<byte[], byte[]> record) {
         process(record, EventParser.ORDER_TOPIC_TYPES);
     }
 
     @Incoming("fulfillment-events")
     @Blocking
-    void onFulfillmentEvent(ConsumerRecord<String, byte[]> record) {
+    void onFulfillmentEvent(ConsumerRecord<byte[], byte[]> record) {
         process(record, EventParser.FULFILLMENT_TOPIC_TYPES);
     }
 
+    /**
+     * Group-scoped dead-letter replay (decision D-006, amended after review). Disabled unless an operator enables it in
+     * the Deployment. It reads the notification dead-letter topic with its own consumer group and applies each record
+     * here, so nothing is produced to topics other services consume. A record that is still poison is logged, counted
+     * and skipped: it stays in the dead-letter topic.
+     */
+    @Incoming("dlq-replay")
+    @Blocking
+    void onReplay(ConsumerRecord<byte[], byte[]> record) {
+        try {
+            process(record, EventParser.ALL_TYPES);
+        } catch (PoisonEventException error) {
+            metrics.consumed("replay", "still_poison");
+            LOG.warnv("Replay skipped a record that is still poison: partition={0} offset={1} reason={2}",
+                    record.partition(), record.offset(), error.getMessage());
+        }
+    }
+
     /** Bytes stay raw on the channel, so a dead-lettered record is exactly what arrived. Invalid UTF-8 is poison. */
-    private static String text(ConsumerRecord<String, byte[]> record) {
+    private static String text(ConsumerRecord<byte[], byte[]> record) {
         if (record.value() == null) {
             return null;
         }
@@ -95,10 +114,15 @@ public class NotificationConsumer {
         }
     }
 
-    void process(ConsumerRecord<String, byte[]> record, Set<String> allowedTypes) {
+    void process(ConsumerRecord<byte[], byte[]> record, Set<String> allowedTypes) {
         InboundEvent event;
         try {
             event = parser.parse(text(record), allowedTypes);
+        } catch (UnknownEventTypeException error) {
+            metrics.consumed("unknown", "ignored_unknown_type");
+            LOG.warnv("Ignoring an event type this service does not know: topic={0} partition={1} offset={2}",
+                    record.topic(), record.partition(), record.offset());
+            return;
         } catch (PoisonEventException error) {
             metrics.consumed("unparsed", "dead_lettered");
             LOG.warnv("Dead-lettering malformed record: topic={0} partition={1} offset={2} reason={3}", record.topic(),
@@ -179,14 +203,27 @@ public class NotificationConsumer {
         }
     }
 
+    /**
+     * Sleeps through interrupts. An interrupt arrives at shutdown; turning it into an exception would nack a valid record
+     * to the dead-letter topic and commit past it. Holding instead leaves the offset uncommitted, so after the pod stops
+     * (at the latest when its grace period ends) the record is redelivered.
+     */
     private long pause(long backoff, int attempt, RuntimeException error) {
         metrics.consumerRetry();
         LOG.warnv("Retrying event: attempt={0} error={1}", attempt, error.getClass().getSimpleName());
-        try {
-            Thread.sleep(backoff);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted during event retry", interrupted);
+        boolean interrupted = false;
+        long deadline = System.nanoTime() + backoff * 1_000_000L;
+        long remaining;
+        while ((remaining = deadline - System.nanoTime()) > 0) {
+            try {
+                Thread.sleep(Math.max(1, remaining / 1_000_000L));
+            } catch (InterruptedException ignored) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            // Deliberately not restored: a set flag would make every later sleep return at once and spin the hold.
+            LOG.info("Interrupted while holding a record; keeping it unacknowledged until the process stops");
         }
         return Math.min(backoff * 2, maxBackoffMillis);
     }

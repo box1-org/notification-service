@@ -97,6 +97,10 @@ public class DeliveryWorker {
         if (timeoutMillis < 100 || timeoutMillis * 2 > leaseSeconds * 1000) {
             throw new IllegalStateException("The provider timeout must be at least 100 ms and under half the lease");
         }
+        if (batchSize < 1 || (long) batchSize * timeoutMillis >= leaseSeconds * 1000) {
+            // Calls in a batch run one after another; the last one must still start inside its lease.
+            throw new IllegalStateException("notification.delivery.batch-size times the provider timeout must be under the lease");
+        }
         this.store = store;
         this.outbox = outbox;
         this.events = events;
@@ -138,7 +142,13 @@ public class DeliveryWorker {
                 store.releaseClaim(intent.notificationId(), owner);
                 continue;
             }
-            recorded += deliver(intent) ? 1 : 0;
+            try {
+                recorded += deliver(intent) ? 1 : 0;
+            } catch (RuntimeException error) {
+                // One failure must not hold the rest of the batch until their leases expire.
+                LOG.warnv("Delivery attempt not recorded; releasing the claim: error={0}", error.getClass().getSimpleName());
+                releaseQuietly(intent);
+            }
         }
         return recorded;
     }
@@ -163,9 +173,18 @@ public class DeliveryWorker {
         }
     }
 
+    private void releaseQuietly(NotificationStore.Claimed intent) {
+        try {
+            store.releaseClaim(intent.notificationId(), owner);
+        } catch (StoreException error) {
+            LOG.warn("Unable to release a claim; its lease will expire");
+        }
+    }
+
     private ProviderResult call(NotificationStore.Claimed intent) {
         Future<ProviderResult> future = calls.submit(() -> provider.deliver(intent.notificationId(), intent.channel(),
                 intent.templateVersion(), intent.body()));
+        // RejectedExecutionException during shutdown propagates to deliverDue, which releases the claim.
         try {
             return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException error) {
@@ -180,7 +199,15 @@ public class DeliveryWorker {
     }
 
     @Transactional
-    boolean record(NotificationStore.Claimed intent, int attempt, Instant started, ProviderResult result) {
+    boolean record(NotificationStore.Claimed intent, int attempt, Instant started, ProviderResult reported) {
+        ProviderResult result = reported;
+        if (Classifier.classify(reported) != Classifier.Outcome.SUCCESS) {
+            // A call that timed out may have been accepted since; the row lock orders this against its receipt write.
+            Optional<String> late = store.lockAndFindReceipt(intent.notificationId());
+            if (late.isPresent()) {
+                result = ProviderResult.accepted(late.get());
+            }
+        }
         Classifier.Outcome outcome = Classifier.classify(result);
         FailureCode code = Classifier.code(result);
         String status;

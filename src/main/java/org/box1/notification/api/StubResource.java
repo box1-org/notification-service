@@ -18,7 +18,6 @@ import org.box1.notification.ops.NotificationMetrics;
 import org.box1.notification.store.StoreException;
 import org.box1.notification.store.StubStore;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement;
 import org.jboss.logging.Logger;
@@ -79,7 +78,7 @@ public class StubResource {
     @RolesAllowed(ClientRoleAugmentor.FAULT_OPERATOR)
     @Operation(summary = "Set the stub's fault mode for a bounded time (demo namespace only)")
     public Response set(Views.FaultRequest request) {
-        String actor = actor();
+        Actor actor = actor();
         String mode = request == null ? null : request.mode();
         Integer ttl = request == null ? null : request.ttlSeconds();
         String refusal = gate.refusal();
@@ -105,7 +104,7 @@ public class StubResource {
         if (failCount != null && (failCount < 1 || failCount > MAX_FAIL_COUNT)) {
             return refuse("SET", mode, ttl, "INVALID_FAIL_COUNT", actor);
         }
-        store.setFault(mode, ttl, delay, failCount, actor, gate.namespace());
+        store.setFault(mode, ttl, delay, failCount, actor.name(), actor.subject(), gate.namespace());
         metrics.faultControl("set", "accepted");
         return Response.ok(view()).build();
     }
@@ -115,12 +114,12 @@ public class StubResource {
     @RolesAllowed(ClientRoleAugmentor.FAULT_OPERATOR)
     @Operation(summary = "Clear the stub's fault mode")
     public Response clear() {
-        String actor = actor();
+        Actor actor = actor();
         String refusal = gate.refusal();
         if (refusal != null) {
             return refuse("CLEAR", null, null, refusal, actor);
         }
-        store.clearFault(actor, gate.namespace());
+        store.clearFault(actor.name(), actor.subject(), gate.namespace());
         metrics.faultControl("clear", "accepted");
         return Response.ok(view()).build();
     }
@@ -133,9 +132,9 @@ public class StubResource {
         return new Views.Audit(store.audit(100));
     }
 
-    private Response refuse(String action, String mode, Integer ttl, String code, String actor) {
+    private Response refuse(String action, String mode, Integer ttl, String code, Actor actor) {
         try {
-            store.auditRefusal(actor, action, mode == null || MODES.contains(mode) ? mode : null, ttl, "REFUSED_" + code,
+            store.auditRefusal(actor.name(), actor.subject(), action, mode == null || MODES.contains(mode) ? mode : null, ttl, "REFUSED_" + code,
                     gate.namespace());
         } catch (StoreException error) {
             // The refusal stands even when it cannot be audited. Accepted changes are audited in their own transaction.
@@ -147,16 +146,7 @@ public class StubResource {
                 gateClosed ? "Stub fault control is not allowed in this namespace" : "The fault request is out of bounds");
     }
 
-    /** The operator's username from the token, else its subject. Never an email address. */
-    private String actor() {
-        if (identity.getPrincipal() instanceof JsonWebToken token) {
-            Object name = token.getClaim("preferred_username");
-            String value = name == null ? null : name.toString().replace("\"", "");
-            if (value != null && !value.isBlank() && !value.contains("@")) {
-                return value.length() > 128 ? value.substring(0, 128) : value;
-            }
-            return token.getSubject() == null ? "unknown" : token.getSubject();
-        }
-        return "unknown";
+    private Actor actor() {
+        return Actor.of(identity);
     }
 }

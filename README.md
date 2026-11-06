@@ -39,12 +39,15 @@ Bearer tokens come from Keycloak realm `box1`, client `notification-service`. Er
 | `NOTIFY_DELIVERY_MAX_ATTEMPTS` | `6` | 1–10 |
 | `NOTIFY_DELIVERY_BASE_BACKOFF_SECONDS` / `_MAX_BACKOFF_SECONDS` | `2` / `60` | Backoff doubles from the base up to the cap (≤ 300) |
 | `NOTIFY_PROVIDER_TIMEOUT_MILLIS` | `2000` | Provider call timeout |
+| `NOTIFY_DLQ_REPLAY_ENABLED` | `false` | Replay the dead-letter topic inside this service (runbook) |
+| `NOTIFY_CHECK_DLQ_TOPIC` | `true` | Refuse to start if Kafka is reachable and the dead-letter topic is missing |
+| `NOTIFY_DELIVERY_BATCH_SIZE` | `10` | Batch × provider timeout must be under the lease |
 | `NOTIFY_AUTH_CONSOLE_CLIENT_ID` | empty | Accept the operator console's forwarded token (reader only) when set |
 | `NOTIFY_AUTH_CONSOLE_READER_ROLES` | `console-viewer,console-operator` | Console roles that grant reading |
 | `NOTIFY_JWT_AUDIENCES` | `notification-service` | Accepted `aud` values; add the console client when it is accepted |
 | `NOTIFY_JWT_ISSUER`, `NOTIFY_JWKS_URL` | realm `box1` | Token issuer and keys |
 | `NOTIFY_CHANNEL_*` | see `application.properties` | Channel per notice type; must match `ops-<name>` |
-| `NOTIFY_RETENTION_*` | 30 / 30 / 7 days | Terminal notices, processed events, published outbox rows |
+| `NOTIFY_RETENTION_*` | 30 / 30 / 7 days | Terminal notices (≥ 15), processed events (≥ 15), published outbox rows |
 
 Invalid safety limits stop the application at startup rather than running with them.
 

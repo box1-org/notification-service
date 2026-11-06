@@ -56,6 +56,8 @@ public class FullStackResource implements QuarkusTestResourceLifecycleManager {
         config.put("notification.delivery.max-backoff-seconds", "1");
         config.put("notification.delivery.provider-timeout-millis", "500");
         config.put("notification.delivery.lease-seconds", "3");
+        config.put("notification.delivery.batch-size", "5");
+        config.put("notification.startup.check-dlq-topic", "true");
         config.put("notification.delivery.poll-interval", "100ms");
         config.put("notification.outbox.poll-interval", "200ms");
         config.put("notification.outbox.lease-seconds", "3");

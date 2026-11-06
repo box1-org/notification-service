@@ -34,7 +34,7 @@ class SecurityTest {
     @Test
     /** A console token is refused at the audience check while console tokens are not accepted (D-007 pending). */
     void invalidTokensGet401() {
-        for (String token : new String[] {TestTokens.wrongAudience(), TestTokens.wrongKey(), TestTokens.expired(), "garbage",
+        for (String token : new String[] {TestTokens.wrongAudience(), TestTokens.wrongKey(), TestTokens.expired(), TestTokens.idToken(), "garbage",
             TestTokens.console("console-viewer")}) {
             given().auth().oauth2(token).when().get(LIST).then().statusCode(401);
         }

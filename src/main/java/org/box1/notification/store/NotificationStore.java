@@ -168,6 +168,27 @@ public class NotificationStore {
         }
     }
 
+    /**
+     * Lock the notification row for the caller's transaction and return its receipt, if any. Called before recording a
+     * non-success result, so a provider call that completed late (after a timeout) is recorded as the delivery it was.
+     */
+    @Transactional(Transactional.TxType.MANDATORY)
+    public Optional<String> lockAndFindReceipt(String notificationId) {
+        String lock = "SELECT 1 FROM notification WHERE notification_id = ? FOR UPDATE";
+        String receipt = "SELECT receipt_id FROM delivery_receipt WHERE notification_id = ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement l = c.prepareStatement(lock);
+                PreparedStatement s = c.prepareStatement(receipt)) {
+            l.setString(1, notificationId);
+            l.executeQuery().close();
+            s.setString(1, notificationId);
+            try (ResultSet r = s.executeQuery()) {
+                return r.next() ? Optional.of(r.getString(1)) : Optional.empty();
+            }
+        } catch (SQLException error) {
+            throw new StoreException(error);
+        }
+    }
+
     /** Give a claim back without an attempt, for a worker that is shutting down. */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
     public void releaseClaim(String notificationId, String owner) {

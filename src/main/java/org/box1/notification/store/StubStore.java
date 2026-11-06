@@ -38,24 +38,33 @@ public class StubStore {
         }
     }
 
-    /** Write the receipt once. A repeated call for the same notification returns the existing receipt. */
+    /**
+     * Write the receipt once, and only while the notification is not terminal. The notification row is locked, so a late
+     * call (one the worker already timed out) cannot add a receipt to a notification recorded as FAILED. A repeated call
+     * returns the existing receipt; a late call after a terminal status returns null.
+     */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
     public String writeReceipt(String receiptId, String notificationId, String channel, String bodySha256, int bodyLength) {
+        String lock = "SELECT status FROM notification WHERE notification_id = ? FOR UPDATE";
         String insert = "INSERT INTO delivery_receipt (receipt_id, notification_id, provider, channel, body_sha256, body_length)"
-                + " VALUES (?, ?, 'stub', ?, ?, ?) ON CONFLICT (notification_id) DO NOTHING";
+                + " SELECT ?, ?, 'stub', ?, ?, ? WHERE EXISTS (SELECT 1 FROM notification WHERE notification_id = ?"
+                + " AND status IN ('PENDING', 'RETRY_SCHEDULED')) ON CONFLICT (notification_id) DO NOTHING";
         String select = "SELECT receipt_id FROM delivery_receipt WHERE notification_id = ?";
-        try (Connection c = dataSource.getConnection(); PreparedStatement s = c.prepareStatement(insert)) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement l = c.prepareStatement(lock);
+                PreparedStatement s = c.prepareStatement(insert)) {
+            l.setString(1, notificationId);
+            l.executeQuery().close();
             s.setString(1, receiptId);
             s.setString(2, notificationId);
             s.setString(3, channel);
             s.setString(4, bodySha256);
             s.setInt(5, bodyLength);
+            s.setString(6, notificationId);
             s.executeUpdate();
             try (PreparedStatement q = c.prepareStatement(select)) {
                 q.setString(1, notificationId);
                 try (ResultSet r = q.executeQuery()) {
-                    r.next();
-                    return r.getString(1);
+                    return r.next() ? r.getString(1) : null;
                 }
             }
         } catch (SQLException error) {
@@ -116,7 +125,8 @@ public class StubStore {
 
     /** Replace the active fault and audit it, in one transaction. Returns the expiry in database time. */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
-    public Instant setFault(String mode, int ttlSeconds, int delayMillis, Integer failCount, String actor, String namespace) {
+    public Instant setFault(String mode, int ttlSeconds, int delayMillis, Integer failCount, String actor, String subject,
+            String namespace) {
         String upsert = "INSERT INTO stub_fault (id, mode, delay_millis, fail_remaining, expires_at, set_by, set_at)"
                 + " VALUES (1, ?, ?, ?, now() + make_interval(secs => ?), ?, now())"
                 + " ON CONFLICT (id) DO UPDATE SET mode = EXCLUDED.mode, delay_millis = EXCLUDED.delay_millis,"
@@ -137,7 +147,7 @@ public class StubStore {
                 r.next();
                 expires = r.getTimestamp(1).toInstant();
             }
-            audit(c, actor, "SET", mode, ttlSeconds, "ACCEPTED", namespace);
+            audit(c, actor, subject, "SET", mode, ttlSeconds, "ACCEPTED", namespace);
             return expires;
         } catch (SQLException error) {
             throw new StoreException(error);
@@ -146,7 +156,7 @@ public class StubStore {
 
     /** Clear the active fault and audit it. True if one was active. */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
-    public boolean clearFault(String actor, String namespace) {
+    public boolean clearFault(String actor, String subject, String namespace) {
         try (Connection c = dataSource.getConnection();
                 PreparedStatement s = c.prepareStatement("DELETE FROM stub_fault WHERE id = 1 RETURNING mode")) {
             String mode = null;
@@ -155,7 +165,7 @@ public class StubStore {
                     mode = r.getString(1);
                 }
             }
-            audit(c, actor, "CLEAR", mode, null, mode == null ? "NO_ACTIVE_FAULT" : "ACCEPTED", namespace);
+            audit(c, actor, subject, "CLEAR", mode, null, mode == null ? "NO_ACTIVE_FAULT" : "ACCEPTED", namespace);
             return mode != null;
         } catch (SQLException error) {
             throw new StoreException(error);
@@ -184,9 +194,10 @@ public class StubStore {
 
     /** Audit a refused request in its own transaction. */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
-    public void auditRefusal(String actor, String action, String mode, Integer ttlSeconds, String outcome, String namespace) {
+    public void auditRefusal(String actor, String subject, String action, String mode, Integer ttlSeconds, String outcome,
+            String namespace) {
         try (Connection c = dataSource.getConnection()) {
-            audit(c, actor, action, mode, ttlSeconds, outcome, namespace);
+            audit(c, actor, subject, action, mode, ttlSeconds, outcome, namespace);
         } catch (SQLException error) {
             throw new StoreException(error);
         }
@@ -217,24 +228,25 @@ public class StubStore {
         try (PreparedStatement d = c.prepareStatement("DELETE FROM stub_fault WHERE id = 1")) {
             d.executeUpdate();
         }
-        audit(c, "system", action, fault.mode(), null, "ENDED", null);
+        audit(c, "system", null, action, fault.mode(), null, "ENDED", null);
     }
 
-    private static void audit(Connection c, String actor, String action, String mode, Integer ttlSeconds, String outcome,
-            String namespace) throws SQLException {
-        String sql = "INSERT INTO stub_fault_audit (actor, action, mode, ttl_seconds, outcome, namespace)"
-                + " VALUES (?, ?, ?, ?, ?, ?)";
+    private static void audit(Connection c, String actor, String subject, String action, String mode, Integer ttlSeconds,
+            String outcome, String namespace) throws SQLException {
+        String sql = "INSERT INTO stub_fault_audit (actor, actor_subject, action, mode, ttl_seconds, outcome, namespace)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement s = c.prepareStatement(sql)) {
             s.setString(1, actor);
-            s.setString(2, action);
-            s.setString(3, mode);
+            s.setString(2, subject);
+            s.setString(3, action);
+            s.setString(4, mode);
             if (ttlSeconds == null) {
-                s.setNull(4, Types.INTEGER);
+                s.setNull(5, Types.INTEGER);
             } else {
-                s.setInt(4, ttlSeconds);
+                s.setInt(5, ttlSeconds);
             }
-            s.setString(5, outcome);
-            s.setString(6, namespace);
+            s.setString(6, outcome);
+            s.setString(7, namespace);
             s.executeUpdate();
         }
     }

@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.identity.AuthenticationRequestContext;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.SecurityIdentityAugmentor;
@@ -52,6 +53,10 @@ public class ClientRoleAugmentor implements SecurityIdentityAugmentor {
         if (identity.isAnonymous() || !(identity.getPrincipal() instanceof JsonWebToken token)) {
             return Uni.createFrom().item(identity);
         }
+        // Only access tokens: an ID token for this client carries the same aud and azp (security review L2).
+        if (!"Bearer".equals(stringClaim(token, "typ"))) {
+            return Uni.createFrom().failure(new AuthenticationFailedException("Not an access token"));
+        }
         QuarkusSecurityIdentity.Builder builder = QuarkusSecurityIdentity.builder().setPrincipal(token)
                 .addCredentials(identity.getCredentials()).addAttributes(identity.getAttributes())
                 .addRoles(roles(token));
@@ -59,7 +64,7 @@ public class ClientRoleAugmentor implements SecurityIdentityAugmentor {
     }
 
     Set<String> roles(JsonWebToken token) {
-        String azp = token.getClaim("azp") instanceof String value ? value : stringClaim(token, "azp");
+        String azp = stringClaim(token, "azp");
         Set<String> audience = token.getAudience() == null ? Set.of() : token.getAudience();
         if (CLIENT.equals(azp) && audience.contains(CLIENT)) {
             Set<String> granted = new HashSet<>(clientRoles(token, CLIENT));
@@ -75,6 +80,9 @@ public class ClientRoleAugmentor implements SecurityIdentityAugmentor {
 
     private static String stringClaim(JsonWebToken token, String name) {
         Object value = token.getClaim(name);
+        if (value instanceof String text) {
+            return text;
+        }
         if (value instanceof JsonString json) {
             return json.getString();
         }

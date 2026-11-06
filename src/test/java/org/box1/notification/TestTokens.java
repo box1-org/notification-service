@@ -68,7 +68,7 @@ public final class TestTokens implements QuarkusTestResourceLifecycleManager {
 
     /** Issued to another client, with this service in its audience and these roles on it (asset-service SEC-3). */
     static String otherClient() {
-        return Jwt.issuer(ISSUER).audience(java.util.Set.of("notification-service", "openshell-cli")).subject("op-other")
+        return Jwt.claim("typ", "Bearer").issuer(ISSUER).audience(java.util.Set.of("notification-service", "openshell-cli")).subject("op-other")
                 .claim("azp", "openshell-cli")
                 .claim("resource_access", Map.of("notification-service", Map.of("roles", List.of("notification-reader"))))
                 .sign(KEYS.getPrivate());
@@ -76,7 +76,7 @@ public final class TestTokens implements QuarkusTestResourceLifecycleManager {
 
     /** The shape the operator console backend forwards (#18 D-002): azp and aud operations-console, console roles. */
     static String console(String role) {
-        return Jwt.issuer(ISSUER).audience(java.util.Set.of("operations-console", "inventory-service")).subject("op-console")
+        return Jwt.claim("typ", "Bearer").issuer(ISSUER).audience(java.util.Set.of("operations-console", "inventory-service")).subject("op-console")
                 .claim("azp", "operations-console").claim("preferred_username", "console-user")
                 .claim("resource_access", Map.of("operations-console", Map.of("roles", List.of(role)),
                         "notification-service", Map.of("roles", List.of("notification-fault-operator"))))
@@ -84,32 +84,40 @@ public final class TestTokens implements QuarkusTestResourceLifecycleManager {
     }
 
     static String wrongAudience() {
-        return Jwt.issuer(ISSUER).audience("other-service").subject("op-aud").claim("azp", "notification-service")
+        return Jwt.claim("typ", "Bearer").issuer(ISSUER).audience("other-service").subject("op-aud").claim("azp", "notification-service")
                 .claim("resource_access", Map.of("notification-service", Map.of("roles", List.of("notification-reader"))))
                 .sign(KEYS.getPrivate());
     }
 
     static String wrongKey() {
-        return Jwt.issuer(ISSUER).audience("notification-service").subject("op-key").claim("azp", "notification-service")
+        return Jwt.claim("typ", "Bearer").issuer(ISSUER).audience("notification-service").subject("op-key").claim("azp", "notification-service")
                 .claim("resource_access", Map.of("notification-service", Map.of("roles", List.of("notification-reader"))))
                 .sign(OTHER_KEYS.getPrivate());
     }
 
     /** Signed correctly, with the role only in a top-level groups claim. */
     static String groupsOnly() {
-        return Jwt.issuer(ISSUER).audience("notification-service").subject("op-groups").claim("azp", "notification-service")
+        return Jwt.claim("typ", "Bearer").issuer(ISSUER).audience("notification-service").subject("op-groups").claim("azp", "notification-service")
                 .groups(java.util.Set.of("notification-reader")).sign(KEYS.getPrivate());
     }
 
+    /** An ID token for this client: same issuer, audience and azp, but not an access token. */
+    static String idToken() {
+        return Jwt.claim("typ", "ID").issuer(ISSUER).audience("notification-service").subject("op-id")
+                .claim("azp", "notification-service")
+                .claim("resource_access", Map.of("notification-service", Map.of("roles", List.of("notification-fault-operator"))))
+                .sign(KEYS.getPrivate());
+    }
+
     static String expired() {
-        return Jwt.issuer(ISSUER).audience("notification-service").subject("op-expired").expiresAt(1000L)
+        return Jwt.claim("typ", "Bearer").issuer(ISSUER).audience("notification-service").subject("op-expired").expiresAt(1000L)
                 .claim("azp", "notification-service")
                 .claim("resource_access", Map.of("notification-service", Map.of("roles", List.of("notification-reader"))))
                 .sign(KEYS.getPrivate());
     }
 
     private static String token(String subject, String azp, String audience, List<String> roles) {
-        return Jwt.issuer(ISSUER).audience(audience).subject(subject).claim("azp", azp)
+        return Jwt.claim("typ", "Bearer").issuer(ISSUER).audience(audience).subject(subject).claim("azp", azp)
                 .claim("preferred_username", subject)
                 .claim("resource_access", Map.of(azp, Map.of("roles", roles)))
                 .sign(KEYS.getPrivate());

@@ -27,6 +27,16 @@ envelope only. The `order.placed.v1` payload, the only one with `customerId`, is
 Templates are plain text and versioned as `{noticeType}@v{n}`. They substitute only allowlisted identifiers, states and
 reason codes, and they escape control characters and markup or chat syntax.
 
+A fact two events can report (`ORDER_SHIPPED`, `SHIPMENT_FAILED`) uses only fields both events carry, so its text is the
+same whichever event arrives first. The wording states what fulfillment reported. It does not claim an order outcome
+this service cannot know.
+
+Accepted limitations:
+- A recurring retryable failure with the same request and reason produces one `SHIPMENT_DELAYED` notice, not one per
+  occurrence.
+- Events on the two topics are not ordered relative to each other. A delayed notice can arrive after the shipped notice
+  for the same order; both are true facts.
+
 ## One fact, one notice (D-003)
 
 - **Event layer.** `processed_event` records each `eventId` in the same transaction as its effect, so a redelivered
@@ -71,7 +81,12 @@ dependency: a broker outage only grows the outbox.
   - an envelope that breaks the v1 rules;
   - an event type the topic does not carry;
   - a consumed payload that breaks its schema rules.
-- A database outage holds the channel without using up attempts. Other errors get bounded retries, then go to the DLQ.
+- A well-formed event of an unknown type is acknowledged and counted, not dead-lettered.
+- A database outage holds the channel without using up attempts, even through an interrupt at shutdown. The record stays
+  unacknowledged and is redelivered. Other errors get up to 20 attempts, capped at 30 s (about 7 minutes per record),
+  then go to the DLQ. While that runs, the record holds its topic's partitions.
+- Dead-letter replay runs inside the service on a disabled-by-default channel with its own group (`notification-replay`),
+  never by producing to shared topics.
 
 ## Access (D-007)
 
@@ -118,11 +133,15 @@ No table, event, receipt, log line or metric label holds a customer identifier. 
   - `box1_notification_delivery_attempts_total{outcome}`
   - `box1_notification_delivered_total`, `box1_notification_failed_total{category}`
   - `box1_notification_events_consumed_total{type,outcome}`
-  - `box1_outbox_pending`, `box1_outbox_oldest_pending_age_seconds`, `box1_outbox_publish_failures_total`
+  - `box1_notification_outbox_pending`, `box1_notification_outbox_oldest_pending_age_seconds`,
+    `box1_notification_outbox_publish_failures_total`, `box1_notification_metrics_snapshot_age_seconds`
 
 ## Limits
 
 - One replica. The design is safe with more (`SKIP LOCKED`, leases), but that is not tested.
 - No real provider exists. One would need a secret and approval.
 - The Kafka listener is plaintext with no client authentication. That is a platform limit, not addressed here.
-- A poisoned `order.placed.v1` record is copied unchanged to the DLQ, keeping order-topic data for 14 days instead of 7.
+- A poisoned `order.placed.v1` record is copied unchanged to the DLQ, keeping order-topic data, including `customerId`,
+  for 14 days instead of 7. This needs the user's explicit acceptance, or a shorter DLQ retention.
+- The audit trigger can be dropped by the table owner, which is the runtime login while Flyway runs as it. A separate
+  migration owner waits on #41.

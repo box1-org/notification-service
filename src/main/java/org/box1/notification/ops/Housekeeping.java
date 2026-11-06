@@ -26,8 +26,8 @@ public class Housekeeping {
             @ConfigProperty(name = "notification.retention.terminal-days") long terminalDays,
             @ConfigProperty(name = "notification.retention.processed-event-days") long processedDays,
             @ConfigProperty(name = "notification.retention.published-outbox-days") long outboxDays) {
-        if (terminalDays < 1 || processedDays < 15 || outboxDays < 1) {
-            throw new IllegalStateException("Retention must keep processed events longer than the 14-day topic retention");
+        if (terminalDays < 15 || processedDays < 15 || outboxDays < 1) {
+            throw new IllegalStateException("Retention must keep notices and processed events longer than the 14-day topic retention");
         }
         this.stub = stub;
         this.store = store;

@@ -42,6 +42,15 @@ class EventParserTest {
     }
 
     @Test
+    void unknownTypesAreIgnoredButKnownTypesOnTheWrongTopicArePoison() {
+        ObjectNode future = Events.stateChanged("ord_1", "SUBMITTED", "RESERVED", "OK").put("eventType", "order.archived.v1");
+        assertThrows(org.box1.notification.domain.UnknownEventTypeException.class,
+                () -> parser.parse(future.toString(), EventParser.ORDER_TOPIC_TYPES));
+        poison(Events.stateChanged("ord_1", "SUBMITTED", "RESERVED", "OK").put("eventType", "bad type\n").toString(),
+                "Invalid eventType");
+    }
+
+    @Test
     void poisonMessagesNeverEchoValues() {
         ObjectNode e = Events.stateChanged("ord_1", "FULFILLMENT_REQUESTED", "SHIPPED", "OK");
         ((ObjectNode) e.get("payload")).put("reasonCode", "SECRET_VALUE lower");

@@ -52,7 +52,9 @@ public class StubProvider implements DeliveryProvider {
         String bodySha = sha256(bytes);
         String receiptId = "rcpt_" + sha256((notificationId + templateVersion + bodySha).getBytes(StandardCharsets.UTF_8))
                 .substring(0, 24);
-        return ProviderResult.accepted(store.writeReceipt(receiptId, notificationId, channel, bodySha, bytes.length));
+        String written = store.writeReceipt(receiptId, notificationId, channel, bodySha, bytes.length);
+        // Null: the notification became terminal while this call was in flight; nothing was delivered.
+        return written == null ? ProviderResult.status(409) : ProviderResult.accepted(written);
     }
 
     static String sha256(byte[] bytes) {

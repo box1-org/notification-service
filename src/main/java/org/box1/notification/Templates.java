@@ -17,12 +17,14 @@ public final class Templates {
     private static final int MAX_VALUE = 128;
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([a-zA-Z]+)}");
     private static final Map<NoticeType, String> V1 = Map.of(
-            NoticeType.ORDER_SHIPPED, "Order {orderId} shipped.{shipmentDetail}",
+            // ORDER_SHIPPED and SHIPMENT_FAILED can be reported by either of two events, so they use only fields both
+            // carry: the text is the same whichever arrives first (architecture review 3 and 4).
+            NoticeType.ORDER_SHIPPED, "Shipment confirmed for order {orderId}.",
             NoticeType.SHIPMENT_DELAYED, "Shipment for order {orderId} is delayed: fulfillment request "
                     + "{fulfillmentRequestId} failed with retryable reason {reasonCode}. The order state is unchanged and "
                     + "the fulfillment adapter will retry.",
-            NoticeType.SHIPMENT_FAILED, "Shipment for order {orderId} failed and the order needs manual reconciliation. "
-                    + "Reason: {reasonCode}.",
+            NoticeType.SHIPMENT_FAILED, "Fulfillment reported a non-retryable shipment failure for order {orderId}. Check "
+                    + "the order; it may need manual reconciliation.",
             NoticeType.ORDER_EXCEPTION, "Order {orderId} moved from {fromState} to EXCEPTION with reason {reasonCode} "
                     + "and needs manual reconciliation.",
             NoticeType.ORDER_REJECTED, "Order {orderId} was rejected with reason {reasonCode}.");
@@ -39,15 +41,12 @@ public final class Templates {
         values.put("fulfillmentRequestId", event.fulfillmentRequestId());
         values.put("reasonCode", event.reasonCode());
         values.put("fromState", event.fromState());
-        values.put("shipmentDetail", event.shipmentId() == null ? ""
-                : " Shipment " + escape(event.shipmentId()) + " for fulfillment request "
-                        + escape(event.fulfillmentRequestId()) + ".");
         Matcher matcher = PLACEHOLDER.matcher(V1.get(type));
         StringBuilder out = new StringBuilder();
         while (matcher.find()) {
             String name = matcher.group(1);
             String value = values.get(name);
-            String rendered = "shipmentDetail".equals(name) ? value : escape(value == null ? "unknown" : value);
+            String rendered = escape(value == null ? "unknown" : value);
             matcher.appendReplacement(out, Matcher.quoteReplacement(rendered));
         }
         matcher.appendTail(out);
@@ -59,7 +58,8 @@ public final class Templates {
         if (value == null) {
             return "";
         }
-        String cut = value.length() > MAX_VALUE ? value.substring(0, MAX_VALUE) + "…" : value;
+        String cut = value.codePointCount(0, value.length()) > MAX_VALUE
+                ? value.substring(0, value.offsetByCodePoints(0, MAX_VALUE)) + "…" : value;
         StringBuilder out = new StringBuilder(cut.length());
         cut.codePoints().forEach(cp -> {
             switch (cp) {

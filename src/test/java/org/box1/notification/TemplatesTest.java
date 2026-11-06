@@ -35,6 +35,26 @@ class TemplatesTest {
     }
 
     @Test
+    void cutsOnCodePointsSoNoSurrogateIsSplit() {
+        String text = Templates.escape("a".repeat(127) + "\uD83D\uDE00" + "b".repeat(10));
+        assertTrue(text.endsWith("\uD83D\uDE00…"), text);
+    }
+
+    @Test
+    void factsReportedByTwoEventsRenderTheSameWhicheverArrivesFirst() {
+        InboundEvent confirmed = new InboundEvent(UUID.randomUUID(), InboundEvent.SHIPMENT_CONFIRMED, "ord_1", Instant.now(),
+                "c", null, null, null, null, "ful_1", "shp_1", null);
+        InboundEvent shipped = new InboundEvent(UUID.randomUUID(), InboundEvent.STATE_CHANGED, "ord_1", Instant.now(), "c",
+                null, "FULFILLMENT_REQUESTED", "SHIPPED", "OK", null, null, null);
+        assertEquals(Templates.render(NoticeType.ORDER_SHIPPED, confirmed), Templates.render(NoticeType.ORDER_SHIPPED, shipped));
+        InboundEvent failed = new InboundEvent(UUID.randomUUID(), InboundEvent.SHIPMENT_FAILED, "ord_1", Instant.now(), "c",
+                null, null, null, "CARRIER_REJECTED", "ful_1", null, false);
+        InboundEvent exception = new InboundEvent(UUID.randomUUID(), InboundEvent.STATE_CHANGED, "ord_1", Instant.now(), "c",
+                null, "FULFILLMENT_REQUESTED", "EXCEPTION", "SHIPMENT_FAILED", null, null, null);
+        assertEquals(Templates.render(NoticeType.SHIPMENT_FAILED, failed), Templates.render(NoticeType.SHIPMENT_FAILED, exception));
+    }
+
+    @Test
     void rendersOnlyAllowlistedFieldsWithAVersion() {
         assertEquals("SHIPMENT_DELAYED@v1", Templates.version(NoticeType.SHIPMENT_DELAYED));
         String text = Templates.render(NoticeType.SHIPMENT_DELAYED, event("CARRIER_TIMEOUT", "ful_9"));
