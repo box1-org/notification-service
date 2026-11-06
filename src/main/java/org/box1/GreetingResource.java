@@ -2,6 +2,7 @@ package org.box1;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.security.PermitAll;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
@@ -13,6 +14,8 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.OpenAPIDefinition;
 import org.eclipse.microprofile.openapi.annotations.info.Info;
 
+/** Golden Path smoke endpoint: anonymous by design for the release smoke task (box1-docs#40). */
+@PermitAll
 @Path("/api/greetings")
 @Produces(MediaType.APPLICATION_JSON)
 @OpenAPIDefinition(info = @Info(title = "notification-service REST API", version = "1.0.0"))
