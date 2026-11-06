@@ -63,6 +63,11 @@ public class StubResource {
     @RolesAllowed(ClientRoleAugmentor.READER)
     @Operation(summary = "Show the stub provider, its active fault and whether fault control is open here")
     public Views.StubState state() {
+        return view();
+    }
+
+    /** Not annotated: set and clear return it to a fault operator who may not hold the reader role. */
+    private Views.StubState view() {
         String refusal = gate.refusal();
         return new Views.StubState("stub", store.activeFault().map(Views.ActiveFault::of).orElse(null),
                 new Views.FaultControl(refusal == null, refusal, gate.namespace(), maxTtlSeconds));
@@ -102,7 +107,7 @@ public class StubResource {
         }
         store.setFault(mode, ttl, delay, failCount, actor, gate.namespace());
         metrics.faultControl("set", "accepted");
-        return Response.ok(state()).build();
+        return Response.ok(view()).build();
     }
 
     @DELETE
@@ -117,7 +122,7 @@ public class StubResource {
         }
         store.clearFault(actor, gate.namespace());
         metrics.faultControl("clear", "accepted");
-        return Response.ok(state()).build();
+        return Response.ok(view()).build();
     }
 
     @GET

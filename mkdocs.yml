@@ -1,6 +1,8 @@
 site_name: notification-service
-site_description: "A Quarkus REST service on OpenShift"
+site_description: "Operator notices for the Box1 order lifecycle"
 nav:
   - Home: index.md
+  - Architecture: architecture.md
+  - Runbook: runbook.md
 plugins:
   - techdocs-core

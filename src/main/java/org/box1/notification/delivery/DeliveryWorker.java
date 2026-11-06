@@ -22,6 +22,7 @@ import io.opentelemetry.context.Scope;
 import io.opentelemetry.context.propagation.TextMapGetter;
 import io.quarkus.runtime.ShutdownEvent;
 import io.quarkus.scheduler.Scheduled;
+import io.quarkus.runtime.Startup;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.transaction.Transactional;
@@ -41,6 +42,8 @@ import org.jboss.logging.MDC;
  * steps, so no transaction spans the call. A crash after the provider accepted leaves a lease that expires; the retry
  * reaches the provider with the same idempotency key and gets the existing receipt, so delivery is effective once.
  */
+// Created at startup so invalid limits stop the application instead of failing on every poll.
+@Startup
 @ApplicationScoped
 public class DeliveryWorker {
     /** Compiled hard caps; configuration can only lower them. */

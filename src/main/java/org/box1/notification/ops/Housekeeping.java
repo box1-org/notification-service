@@ -1,6 +1,7 @@
 package org.box1.notification.ops;
 
 import io.quarkus.scheduler.Scheduled;
+import io.quarkus.runtime.Startup;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.box1.notification.store.NotificationStore;
 import org.box1.notification.store.StoreException;
@@ -9,6 +10,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /** Ends expired stub faults on time, with an audit entry, and applies retention (decision D-010). */
+// Created at startup so invalid limits stop the application instead of failing on every poll.
+@Startup
 @ApplicationScoped
 public class Housekeeping {
     private static final Logger LOG = Logger.getLogger(Housekeeping.class);

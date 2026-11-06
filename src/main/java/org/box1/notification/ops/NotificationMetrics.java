@@ -23,13 +23,13 @@ public class NotificationMetrics {
         this.registry = registry;
         this.store = store;
         Gauge.builder("box1.notification.pending", snapshot, s -> s.get().pending())
-                .description("Notifications not yet delivered or failed").register(registry);
+                .description("Notifications not yet delivered or failed").strongReference(true).register(registry);
         Gauge.builder("box1.notification.oldest.pending.age.seconds", snapshot, s -> s.get().oldestPendingAgeSeconds())
-                .description("Age of the oldest notification not yet delivered or failed").register(registry);
+                .description("Age of the oldest notification not yet delivered or failed").strongReference(true).register(registry);
         Gauge.builder("box1.outbox.pending", snapshot, s -> s.get().outboxPending())
-                .description("Notification events not yet confirmed by the broker").register(registry);
+                .description("Notification events not yet confirmed by the broker").strongReference(true).register(registry);
         Gauge.builder("box1.outbox.oldest.pending.age.seconds", snapshot, s -> s.get().outboxOldestAgeSeconds())
-                .description("Age of the oldest unpublished notification event").register(registry);
+                .description("Age of the oldest unpublished notification event").strongReference(true).register(registry);
     }
 
     @Scheduled(every = "${notification.metrics.refresh-interval}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)

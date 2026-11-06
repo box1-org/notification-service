@@ -1,10 +1,73 @@
 # notification-service
 
+Operator notices for the Box1 order lifecycle ([box1-docs#16](https://github.com/box1-org/box1-docs/issues/16)).
+The service consumes order and shipment events and turns the facts an operator would otherwise miss into notices for
+named operator channels (`ops-fulfillment`, `ops-orders`). It delivers them through a **stub** provider with bounded
+retries, and publishes each outcome to `box1.notification.events.v1`. **No customer recipients, contact data or
+customer identifiers** exist anywhere in this service.
+
+- Architecture and design decisions: [docs/architecture.md](docs/architecture.md)
+- Operations, dead-letter replay, fault control and recovery: [docs/runbook.md](docs/runbook.md)
+- API: `/q/openapi` (served), Swagger UI at `/q/swagger-ui`
+- Event contracts: [box1-ops-contracts `NOTIFICATION.md`](https://github.com/box1-org/box1-ops-contracts/blob/main/NOTIFICATION.md)
+
+## API
+
+| Method and path | Role | Purpose |
+|---|---|---|
+| `GET /api/v1/notifications?orderId=ord_…` | `notification-reader` | An order's notices, newest first (max 100), with status, attempts, structured failure reason, sources and redacted receipt |
+| `GET /api/v1/notifications/{notificationId}` | `notification-reader` | One notice |
+| `GET /api/v1/stub` | `notification-reader` | The stub provider, its active fault and whether fault control is open here |
+| `POST /api/v1/stub/faults` | `notification-fault-operator` | Set a bounded stub fault (allowlisted namespace only) |
+| `DELETE /api/v1/stub/faults` | `notification-fault-operator` | Clear it |
+| `GET /api/v1/stub/faults/audit` | `notification-fault-operator` | The fault-control audit trail |
+| `/api/greetings`, `/api/info`, `/q/health/*`, `/q/openapi`, `/q/metrics` | none | Golden Path smoke endpoints ([#40](https://github.com/box1-org/box1-docs/issues/40)) |
+
+Bearer tokens come from Keycloak realm `box1`, client `notification-service`. Errors are RFC 9457 Problem JSON.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `NOTIFY_EVENTS_FLOOR` | **required** | ISO instant. Events that occurred before it never become notices (first-start offset policy). Must not be in the future. |
+| `QUARKUS_DATASOURCE_JDBC_URL`, `_USERNAME`, `_PASSWORD` | — | PostgreSQL; the username and password come from Secret `notification-service-postgres` |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `box1-kafka-kafka-bootstrap.box1-kafka.svc:9092` on the cluster |
+| `POD_NAMESPACE` | — | From the downward API; used only by the fault-control gate |
+| `NOTIFY_STUB_FAULTS_ENABLED` | `false` | Enables the fault-control gate |
+| `NOTIFY_STUB_FAULT_NAMESPACES` | empty | Comma-separated namespaces where fault control is allowed |
+| `NOTIFY_STUB_MAX_TTL_SECONDS` | `900` | Fault TTL cap; 10–900, larger values stop startup |
+| `NOTIFY_DELIVERY_MAX_ATTEMPTS` | `6` | 1–10 |
+| `NOTIFY_DELIVERY_BASE_BACKOFF_SECONDS` / `_MAX_BACKOFF_SECONDS` | `2` / `60` | Backoff doubles from the base up to the cap (≤ 300) |
+| `NOTIFY_PROVIDER_TIMEOUT_MILLIS` | `2000` | Provider call timeout |
+| `NOTIFY_AUTH_CONSOLE_CLIENT_ID` | empty | Accept the operator console's forwarded token (reader only) when set |
+| `NOTIFY_AUTH_CONSOLE_READER_ROLES` | `console-viewer,console-operator` | Console roles that grant reading |
+| `NOTIFY_JWT_AUDIENCES` | `notification-service` | Accepted `aud` values; add the console client when it is accepted |
+| `NOTIFY_JWT_ISSUER`, `NOTIFY_JWKS_URL` | realm `box1` | Token issuer and keys |
+| `NOTIFY_CHANNEL_*` | see `application.properties` | Channel per notice type; must match `ops-<name>` |
+| `NOTIFY_RETENTION_*` | 30 / 30 / 7 days | Terminal notices, processed events, published outbox rows |
+
+Invalid safety limits stop the application at startup rather than running with them.
+
+## Tests
+
+```sh
+./mvnw verify                                   # what CI runs: unit, security, contract tests, Checkstyle, SpotBugs
+# Real PostgreSQL and Kafka (Testcontainers), plus the packaged-app restart test:
+export DOCKER_HOST=unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')  # Podman only
+export TESTCONTAINERS_RYUK_DISABLED=true                                                              # Podman only
+./mvnw verify -Pcontainers -DskipITs=false
+```
+
+Contract tests fetch `box1-ops-contracts` at the commit pinned in `pom.xml` (`contracts.ref`); no schema is copied here.
+
+## Template notes
+
 A Quarkus REST service on OpenShift
 
 Owner: `user:default/mike4263`. Quarkus 3.40.1.1, Java 21, Maven 3.9.16.
 
-Optional integrations selected at creation: PostgreSQL = `false`, Kafka = `true`.
+Optional integrations selected at creation: PostgreSQL = `false`, Kafka = `true`. PostgreSQL was added afterwards
+without a Secret in Git (see the runbook).
 The integrations add their Quarkus extensions and GitOps resources. PostgreSQL creates a
 service-owned Deployment, Service, PVC, and Secret placeholder; replace its password before
 syncing. Kafka uses the separately managed shared `box1-kafka` Strimzi cluster; service
