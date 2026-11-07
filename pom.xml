@@ -16,9 +16,9 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>3.40.1.1</quarkus.platform.version>
         <skipITs>true</skipITs>
-        <!-- box1-ops-contracts commit that contract tests validate against: branch notification-provider-mailhog
-             (provider mailhog allowed). Repin to the merge commit on main once that PR merges. -->
-        <contracts.ref>44266604c29d374d8dd57e727766edbdc28410d6</contracts.ref>
+        <!-- box1-ops-contracts commit that contract tests validate against: main after PR box1-ops-contracts#12
+             (provider mailhog allowed). -->
+        <contracts.ref>bb381b0a46f69febcc0ca37a83877bb878aed151</contracts.ref>
         <!-- CI has no container runtime; tests tagged "containers" run with -Pcontainers. -->
         <test.excluded.groups>containers</test.excluded.groups>
         <surefire-plugin.version>3.5.6</surefire-plugin.version>
