@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 class SecurityTest {
     private static final String LIST = "/api/v1/notifications?orderId=ord_1";
     private static final String[] READ_PATHS = {LIST, "/api/v1/notifications/ntf_0123456789abcdef0123456789", "/api/v1/stub",
-        "/api/v1/stub/faults/audit"};
+        "/api/v1/stub/faults/audit", "/api/v1/delivery-faults", "/api/v1/delivery-faults/audit"};
 
     @Test
     void anonymousRequestsGet401ProblemJson() {
@@ -29,6 +29,9 @@ class SecurityTest {
         given().contentType(ContentType.JSON).body("{\"mode\":\"TRANSIENT_503\",\"ttlSeconds\":60}")
                 .when().post("/api/v1/stub/faults").then().statusCode(401);
         given().when().delete("/api/v1/stub/faults").then().statusCode(401);
+        given().contentType(ContentType.JSON).body("{\"mode\":\"TRANSIENT_503\",\"ttlSeconds\":60}")
+                .when().post("/api/v1/delivery-faults").then().statusCode(401);
+        given().when().delete("/api/v1/delivery-faults").then().statusCode(401);
     }
 
     @Test

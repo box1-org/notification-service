@@ -265,13 +265,14 @@ public class NotificationStore {
 
     @Transactional(Transactional.TxType.SUPPORTS)
     public Optional<ReceiptRow> receipt(String notificationId) {
-        String sql = "SELECT receipt_id, provider, channel, body_sha256, body_length, accepted_at FROM delivery_receipt"
+        String sql = "SELECT receipt_id, provider, channel, body_sha256, body_length, accepted_at, message_id, recipient"
+                + " FROM delivery_receipt"
                 + " WHERE notification_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
             s.setString(1, notificationId);
             try (ResultSet r = s.executeQuery()) {
                 return r.next() ? Optional.of(new ReceiptRow(r.getString(1), r.getString(2), r.getString(3),
-                        r.getString(4), r.getInt(5), instant(r, 6))) : Optional.empty();
+                        r.getString(4), r.getInt(5), instant(r, 6), r.getString(7), r.getString(8))) : Optional.empty();
             }
         } catch (SQLException error) {
             throw new StoreException(error);
@@ -385,7 +386,7 @@ public class NotificationStore {
 
     /** A delivery receipt. */
     public record ReceiptRow(String receiptId, String provider, String channel, String bodySha256, int bodyLength,
-            Instant acceptedAt) {}
+            Instant acceptedAt, String messageId, String recipient) {}
 
     /** Metric inputs. */
     public record Snapshot(long pending, double oldestPendingAgeSeconds, long outboxPending,

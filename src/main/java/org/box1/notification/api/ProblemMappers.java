@@ -73,7 +73,7 @@ public class ProblemMappers {
     /** Security refusals can be raised on the event loop; the audit insert is blocking, so it runs on a worker. */
     private Uni<Response> audited(UriInfo uri, String outcome, java.util.function.Supplier<Response> response) {
         String path = uri == null ? "" : uri.getPath();
-        if (!path.startsWith("/api/v1/stub/faults")) {
+        if (!path.startsWith("/api/v1/stub/faults") && !path.startsWith("/api/v1/delivery-faults")) {
             return Uni.createFrom().item(response.get());
         }
         Actor actor = Actor.of(identity);

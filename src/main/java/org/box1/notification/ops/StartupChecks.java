@@ -5,7 +5,7 @@ import java.time.Instant;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
-import org.box1.notification.api.StubResource;
+import org.box1.notification.api.DeliveryFaults;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -18,15 +18,16 @@ public class StartupChecks {
             @ConfigProperty(name = "notification.consumer.events-floor") Instant floor,
             @ConfigProperty(name = "notification.provider") String provider,
             @ConfigProperty(name = "notification.stub.max-ttl-seconds") int maxTtlSeconds) {
-        if (maxTtlSeconds < StubResource.MIN_TTL_SECONDS || maxTtlSeconds > StubResource.MAX_TTL_CAP_SECONDS) {
+        if (maxTtlSeconds < DeliveryFaults.MIN_TTL_SECONDS || maxTtlSeconds > DeliveryFaults.MAX_TTL_CAP_SECONDS) {
             throw new IllegalStateException("notification.stub.max-ttl-seconds must be between "
-                    + StubResource.MIN_TTL_SECONDS + " and " + StubResource.MAX_TTL_CAP_SECONDS);
+                    + DeliveryFaults.MIN_TTL_SECONDS + " and " + DeliveryFaults.MAX_TTL_CAP_SECONDS);
         }
         if (floor.isAfter(Instant.now())) {
             throw new IllegalStateException("NOTIFY_EVENTS_FLOOR is in the future");
         }
-        if (!"stub".equals(provider)) {
-            throw new IllegalStateException("Only the stub provider exists; a real provider needs approval and a secret");
+        if (!"mailhog".equals(provider) && !"stub".equals(provider)) {
+            // MailHog is an in-cluster sink approved by the user (box1-docs#16); external providers stay out of scope.
+            throw new IllegalStateException("notification.provider must be mailhog or stub");
         }
         LOG.infov("Events floor {0}; provider {1}", floor, provider);
     }

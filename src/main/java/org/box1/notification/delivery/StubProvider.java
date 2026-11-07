@@ -4,17 +4,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.Optional;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import org.box1.notification.store.StubStore;
 
 /**
- * The only provider: it writes a deterministic, redacted receipt (a body hash and length, never the body) and can be
- * switched into bounded fault modes by an operator in an allowlisted namespace.
+ * A test double that writes a deterministic, redacted receipt (a body hash and length, never the body) and sends
+ * nothing. The cluster uses {@link MailHogProvider}; the stub stays for tests and as a fallback.
  */
 @ApplicationScoped
 public class StubProvider implements DeliveryProvider {
+    public static final String NAME = "stub";
     private final StubStore store;
 
     public StubProvider(StubStore store) {
@@ -23,38 +23,23 @@ public class StubProvider implements DeliveryProvider {
 
     @Override
     public String name() {
-        return "stub";
+        return NAME;
     }
 
     @Override
-    public ProviderResult deliver(String notificationId, String channel, String templateVersion, String body) {
-        Optional<String> existing = store.receiptFor(notificationId);
-        if (existing.isPresent()) {
-            // Idempotent: an accepted notification is never delivered twice.
-            return ProviderResult.accepted(existing.get());
-        }
-        Optional<StubStore.Fault> fault = store.takeFault();
-        if (fault.isPresent()) {
-            switch (fault.get().mode()) {
-                case "TRANSIENT_503" -> {
-                    return ProviderResult.status(503);
-                }
-                case "PERMANENT_4XX" -> {
-                    return ProviderResult.status(422);
-                }
-                case "SLOW" -> pause(fault.get().delayMillis());
-                default -> {
-                    return ProviderResult.status(500);
-                }
-            }
-        }
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+    public ProviderResult deliver(Delivery delivery) {
+        byte[] bytes = delivery.body().getBytes(StandardCharsets.UTF_8);
         String bodySha = sha256(bytes);
-        String receiptId = "rcpt_" + sha256((notificationId + templateVersion + bodySha).getBytes(StandardCharsets.UTF_8))
-                .substring(0, 24);
-        String written = store.writeReceipt(receiptId, notificationId, channel, bodySha, bytes.length);
+        String written = store.writeReceipt(new StubStore.NewReceipt(receiptId(delivery, bodySha), delivery.notificationId(),
+                NAME, delivery.channel(), bodySha, bytes.length, null, null));
         // Null: the notification became terminal while this call was in flight; nothing was delivered.
         return written == null ? ProviderResult.status(409) : ProviderResult.accepted(written);
+    }
+
+    /** Deterministic per notification, template and body, whichever provider accepted it. */
+    static String receiptId(Delivery delivery, String bodySha) {
+        return "rcpt_" + sha256((delivery.notificationId() + delivery.templateVersion() + bodySha)
+                .getBytes(StandardCharsets.UTF_8)).substring(0, 24);
     }
 
     static String sha256(byte[] bytes) {
@@ -62,14 +47,6 @@ public class StubProvider implements DeliveryProvider {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
         } catch (NoSuchAlgorithmException error) {
             throw new IllegalStateException(error);
-        }
-    }
-
-    private static void pause(int millis) {
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
         }
     }
 }

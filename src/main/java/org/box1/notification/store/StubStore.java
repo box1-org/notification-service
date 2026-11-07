@@ -16,7 +16,10 @@ import javax.sql.DataSource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
 
-/** The stub provider's receipts, active fault and append-only fault audit. Expiry uses database time. */
+/**
+ * Delivery receipts (every provider), the active delivery fault and its append-only audit. Expiry uses database time.
+ * The table names keep their stub_ prefix from schema v1.
+ */
 @ApplicationScoped
 public class StubStore {
     private final DataSource dataSource;
@@ -44,25 +47,28 @@ public class StubStore {
      * returns the existing receipt; a late call after a terminal status returns null.
      */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
-    public String writeReceipt(String receiptId, String notificationId, String channel, String bodySha256, int bodyLength) {
+    public String writeReceipt(NewReceipt receipt) {
         String lock = "SELECT status FROM notification WHERE notification_id = ? FOR UPDATE";
-        String insert = "INSERT INTO delivery_receipt (receipt_id, notification_id, provider, channel, body_sha256, body_length)"
-                + " SELECT ?, ?, 'stub', ?, ?, ? WHERE EXISTS (SELECT 1 FROM notification WHERE notification_id = ?"
-                + " AND status IN ('PENDING', 'RETRY_SCHEDULED')) ON CONFLICT (notification_id) DO NOTHING";
+        String insert = "INSERT INTO delivery_receipt (receipt_id, notification_id, provider, channel, body_sha256, body_length,"
+                + " message_id, recipient) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM notification"
+                + " WHERE notification_id = ? AND status IN ('PENDING', 'RETRY_SCHEDULED')) ON CONFLICT (notification_id) DO NOTHING";
         String select = "SELECT receipt_id FROM delivery_receipt WHERE notification_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement l = c.prepareStatement(lock);
                 PreparedStatement s = c.prepareStatement(insert)) {
-            l.setString(1, notificationId);
+            l.setString(1, receipt.notificationId());
             l.executeQuery().close();
-            s.setString(1, receiptId);
-            s.setString(2, notificationId);
-            s.setString(3, channel);
-            s.setString(4, bodySha256);
-            s.setInt(5, bodyLength);
-            s.setString(6, notificationId);
+            s.setString(1, receipt.receiptId());
+            s.setString(2, receipt.notificationId());
+            s.setString(3, receipt.provider());
+            s.setString(4, receipt.channel());
+            s.setString(5, receipt.bodySha256());
+            s.setInt(6, receipt.bodyLength());
+            s.setString(7, receipt.messageId());
+            s.setString(8, receipt.recipient());
+            s.setString(9, receipt.notificationId());
             s.executeUpdate();
             try (PreparedStatement q = c.prepareStatement(select)) {
-                q.setString(1, notificationId);
+                q.setString(1, receipt.notificationId());
                 try (ResultSet r = q.executeQuery()) {
                     return r.next() ? r.getString(1) : null;
                 }
@@ -259,7 +265,11 @@ public class StubStore {
                 r.getTimestamp(6).toInstant());
     }
 
-    /** The stub's active fault. */
+    /** A receipt to write. {@code messageId} and {@code recipient} are set by SMTP providers only. */
+    public record NewReceipt(String receiptId, String notificationId, String provider, String channel, String bodySha256,
+            int bodyLength, String messageId, String recipient) {}
+
+    /** The active delivery fault. */
     public record Fault(String mode, int delayMillis, Integer failRemaining, Instant expiresAt, String setBy, Instant setAt) {}
 
     /** One fault-control audit entry. */
