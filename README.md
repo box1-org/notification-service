@@ -2,8 +2,10 @@
 
 Operator notices for the Box1 order lifecycle ([box1-docs#16](https://github.com/box1-org/box1-docs/issues/16)).
 The service consumes order and shipment events and turns the facts an operator would otherwise miss into notices for
-named operator channels (`ops-fulfillment`, `ops-orders`). It delivers them through a **stub** provider with bounded
-retries, and publishes each outcome to `box1.notification.events.v1`. **No customer recipients, contact data or
+named operator channels (`ops-fulfillment`, `ops-orders`). On the cluster it delivers each notice as a real SMTP
+message to **MailHog**, the in-cluster sink ([box1-gitops `platform/mailhog`](https://github.com/box1-org/box1-gitops/tree/main/platform/mailhog)),
+with bounded retries, and publishes each outcome to `box1.notification.events.v1`. `DELIVERED` means *accepted by
+MailHog*; no message leaves the cluster. A `stub` provider (receipts only) remains for tests. **No customer recipients, contact data or
 customer identifiers** exist anywhere in this service.
 
 - Architecture and design decisions: [docs/architecture.md](docs/architecture.md)
@@ -17,10 +19,11 @@ customer identifiers** exist anywhere in this service.
 |---|---|---|
 | `GET /api/v1/notifications?orderId=ord_…` | `notification-reader` | An order's notices, newest first (max 100), with status, attempts, structured failure reason, sources and redacted receipt |
 | `GET /api/v1/notifications/{notificationId}` | `notification-reader` | One notice |
-| `GET /api/v1/stub` | `notification-reader` | The stub provider, its active fault and whether fault control is open here |
-| `POST /api/v1/stub/faults` | `notification-fault-operator` | Set a bounded stub fault (allowlisted namespace only) |
-| `DELETE /api/v1/stub/faults` | `notification-fault-operator` | Clear it |
-| `GET /api/v1/stub/faults/audit` | `notification-fault-operator` | The fault-control audit trail |
+| `GET /api/v1/delivery-faults` | `notification-reader` | The delivery provider, its active fault and whether fault control is open here |
+| `POST /api/v1/delivery-faults` | `notification-fault-operator` | Set a bounded delivery fault (allowlisted namespace only) |
+| `DELETE /api/v1/delivery-faults` | `notification-fault-operator` | Clear it |
+| `GET /api/v1/delivery-faults/audit` | `notification-fault-operator` | The fault-control audit trail |
+| `/api/v1/stub`, `/api/v1/stub/faults`, `/api/v1/stub/faults/audit` | as above | **Deprecated** aliases of the four paths above, kept during the transition |
 | `/api/greetings`, `/api/info`, `/q/health/*`, `/q/openapi`, `/q/metrics` | none | Golden Path smoke endpoints ([#40](https://github.com/box1-org/box1-docs/issues/40)) |
 
 Bearer tokens come from Keycloak realm `box1`, client `notification-service`. Errors are RFC 9457 Problem JSON.
@@ -33,7 +36,12 @@ Bearer tokens come from Keycloak realm `box1`, client `notification-service`. Er
 | `QUARKUS_DATASOURCE_JDBC_URL`, `_USERNAME`, `_PASSWORD` | — | PostgreSQL; the username and password come from Secret `notification-service-postgres` |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `box1-kafka-kafka-bootstrap.box1-kafka.svc:9092` on the cluster |
 | `POD_NAMESPACE` | — | From the downward API; used only by the fault-control gate |
-| `NOTIFY_STUB_FAULTS_ENABLED` | `false` | Enables the fault-control gate |
+| `NOTIFY_PROVIDER` | `stub` | `mailhog` (the cluster setting) or `stub` |
+| `NOTIFY_SMTP_HOST` / `NOTIFY_SMTP_PORT` | `mailhog.mailhog.svc.cluster.local` / `1025` | MailHog SMTP; no auth, no TLS (cluster-internal) |
+| `NOTIFY_SMTP_FROM` | `box1-notifications@box1.local` | Sender |
+| `NOTIFY_SMTP_RECIPIENT_DOMAIN` | `box1.local` | Each channel goes to `<channel>@<domain>`, e.g. `ops-orders@box1.local` |
+| `NOTIFY_SMTP_TIMEOUT_MILLIS` | `1500` | SMTP connect/read/write timeout, 100–30000 |
+| `NOTIFY_STUB_FAULTS_ENABLED` | `false` | Enables the delivery fault-control gate (name kept from v1) |
 | `NOTIFY_STUB_FAULT_NAMESPACES` | empty | Comma-separated namespaces where fault control is allowed |
 | `NOTIFY_STUB_MAX_TTL_SECONDS` | `900` | Fault TTL cap; 10–900, larger values stop startup |
 | `NOTIFY_DELIVERY_MAX_ATTEMPTS` | `6` | 1–10 |

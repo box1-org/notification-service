@@ -27,6 +27,7 @@ import io.restassured.http.ContentType;
 import io.restassured.response.Response;
 import jakarta.inject.Inject;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.box1.notification.delivery.Delivery;
 import org.box1.notification.delivery.StubProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.MethodOrderer;
@@ -290,7 +291,8 @@ class ScenariosTest {
                 + " 'RETRY_SCHEDULED', 1, now(), 'dead-worker', now() + interval '2 seconds', 'c', ?)",
                 id, "ORDER_REJECTED:" + order, order, UUID.randomUUID());
         // ...after its provider call was accepted but before it recorded the result.
-        String first = stub.deliver(id, "ops-orders", "ORDER_REJECTED@v1", "Order rejected.").receiptId();
+        String first = stub.deliver(new Delivery(id, order, "ORDER_REJECTED", "ops-orders", "ORDER_REJECTED@v1",
+                "Order rejected.", "c")).receiptId();
         List<Map<String, Object>> rows = Harness.terminal(order, 1);
         assertEquals("DELIVERED", rows.get(0).get("status"));
         assertEquals(2, rows.get(0).get("attempt_count"));

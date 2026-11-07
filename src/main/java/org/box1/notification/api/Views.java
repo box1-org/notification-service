@@ -34,7 +34,8 @@ public final class Views {
                     attempts.stream().map(a -> new Attempt(a.attempt(), a.startedAt(), a.finishedAt(), a.outcome(),
                             a.failureCode(), a.httpStatus())).toList(),
                     receipt == null ? null : new Receipt(receipt.receiptId(), receipt.provider(), receipt.channel(),
-                            receipt.bodySha256(), receipt.bodyLength(), receipt.acceptedAt()));
+                            receipt.bodySha256(), receipt.bodyLength(), receipt.acceptedAt(), receipt.messageId(),
+                            receipt.recipient()));
         }
     }
 
@@ -50,15 +51,19 @@ public final class Views {
     public record Attempt(int attempt, Instant startedAt, Instant finishedAt, String outcome, String failureCode,
             Integer httpStatus) {}
 
-    /** Redacted receipt: the body's hash and length, not the body. */
+    /**
+     * Redacted receipt: the body's hash and length, not the body. For {@code provider=mailhog}, {@code messageId} and
+     * {@code recipient} find the message in MailHog; both are null for the stub.
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Receipt(String receiptId, String provider, String channel, String bodySha256, int bodyLength,
-            Instant acceptedAt) {}
+            Instant acceptedAt, String messageId, String recipient) {}
 
-    /** The stub provider as operators see it. */
+    /** The delivery provider and its fault control, as operators see them. */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record StubState(String provider, ActiveFault activeFault, FaultControl faultControl) {}
 
-    /** The stub's active fault. */
+    /** The active delivery fault. */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record ActiveFault(String mode, int delayMillis, Integer remainingFailures, Instant expiresAt, String setBy,
             Instant setAt) {

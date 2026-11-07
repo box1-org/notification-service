@@ -75,7 +75,12 @@ class ContractTest {
                 Instant.now());
         EventFactory.Built failedTimeout = factory.failed(intent, 6, "stub", "RETRIES_EXHAUSTED", "PROVIDER_TIMEOUT", null,
                 Instant.now());
-        for (EventFactory.Built built : new EventFactory.Built[] {delivered, failedHttp, failedTimeout}) {
+        EventFactory.Built deliveredMailHog = factory.delivered(intent, 1, "mailhog", "rcpt_0123456789abcdef01234567",
+                Instant.now());
+        EventFactory.Built rejectedMailHog = factory.failed(intent, 1, "mailhog", "PERMANENT_REJECTION", "PROVIDER_REJECTED",
+                422, Instant.now());
+        for (EventFactory.Built built : new EventFactory.Built[] {delivered, failedHttp, failedTimeout, deliveredMailHog,
+            rejectedMailHog}) {
             JsonNode event = JSON.readTree(built.json());
             Set<ValidationMessage> errors = envelope.validate(event);
             assertTrue(errors.isEmpty(), built.eventType() + " envelope: " + errors);

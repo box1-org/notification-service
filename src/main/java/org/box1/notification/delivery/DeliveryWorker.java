@@ -40,7 +40,8 @@ import org.jboss.logging.MDC;
 /**
  * Delivers due notifications from the database (decision D-004). The claim, the provider call and the result are separate
  * steps, so no transaction spans the call. A crash after the provider accepted leaves a lease that expires; the retry
- * reaches the provider with the same idempotency key and gets the existing receipt, so delivery is effective once.
+ * finds the receipt at the provider boundary, so delivery is effective once. One window remains: a crash after MailHog
+ * accepted a message but before its receipt committed sends the message again on the next attempt.
  */
 // Created at startup so invalid limits stop the application instead of failing on every poll.
 @Startup
@@ -66,7 +67,7 @@ public class DeliveryWorker {
     private final NotificationStore store;
     private final OutboxStore outbox;
     private final EventFactory events;
-    private final DeliveryProvider provider;
+    private final ProviderBoundary provider;
     private final NotificationMetrics metrics;
     private final Tracer tracer;
     private final int maxAttempts;
@@ -79,7 +80,7 @@ public class DeliveryWorker {
     private final ExecutorService calls = Executors.newVirtualThreadPerTaskExecutor();
     private final AtomicBoolean stopping = new AtomicBoolean();
 
-    public DeliveryWorker(NotificationStore store, OutboxStore outbox, EventFactory events, StubProvider provider,
+    public DeliveryWorker(NotificationStore store, OutboxStore outbox, EventFactory events, ProviderBoundary provider,
             NotificationMetrics metrics, Tracer tracer,
             @ConfigProperty(name = "notification.delivery.max-attempts") int maxAttempts,
             @ConfigProperty(name = "notification.delivery.base-backoff-seconds") double baseBackoffSeconds,
@@ -182,8 +183,9 @@ public class DeliveryWorker {
     }
 
     private ProviderResult call(NotificationStore.Claimed intent) {
-        Future<ProviderResult> future = calls.submit(() -> provider.deliver(intent.notificationId(), intent.channel(),
-                intent.templateVersion(), intent.body()));
+        Future<ProviderResult> future = calls.submit(() -> provider.deliver(new Delivery(intent.notificationId(),
+                intent.orderId(), intent.noticeType(), intent.channel(), intent.templateVersion(), intent.body(),
+                intent.correlationId())));
         // RejectedExecutionException during shutdown propagates to deliverDue, which releases the claim.
         try {
             return future.get(timeoutMillis, TimeUnit.MILLISECONDS);

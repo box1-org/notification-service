@@ -5,7 +5,7 @@ state and never reads another service's tables. Design records are in the run st
 [box1-docs#16](https://github.com/box1-org/box1-docs/tree/agent-run/16-notification-service/agent-runs/16-notification-service/decisions).
 
 ```text
-box1.order.events.v1 ─┐                                   ┌─> stub provider ─> delivery_receipt
+box1.order.events.v1 ─┐                                   ┌─> provider boundary ─> MailHog (SMTP) ─> delivery_receipt
                       ├─> consumer ─> notification (+source, processed_event)  ─> delivery worker
 box1.fulfillment.events.v1 ┘     │                          └─> delivery_attempt, status, outbox ─> box1.notification.events.v1
                                  └─ poison ─> box1.notification.dlq.v1 (unchanged)
@@ -44,8 +44,11 @@ Accepted limitations:
 - **Fact layer.** `notification.dedupe_key` is unique and built from the business fact (`orderId`, notice type and, for
   delays, the request and reason). It is never built from the event. A second event that reports the same fact adds a
   `notification_source` row and creates no notice.
-- **Delivery layer.** The provider gets `notificationId` as an idempotency key, and `delivery_receipt.notification_id` is
-  unique. A retry after a crash returns the existing receipt.
+- **Delivery layer.** `delivery_receipt.notification_id` is unique, and the provider boundary returns an existing
+  receipt before calling any provider, so a retry never sends again once a receipt exists. A call still running when
+  the worker timed out is not started a second time. **Residual window:** if the process dies after MailHog accepted a
+  message but before its receipt committed, the next attempt sends a second message. MailHog has no idempotency key;
+  the Message-ID `<notificationId@box1.local>` makes such a duplicate identifiable.
 
 ## Delivery (D-004)
 
@@ -60,6 +63,31 @@ Accepted limitations:
   - Any other 4xx is permanent and is not retried.
   - Exhaustion ends in `FAILED` / `RETRIES_EXHAUSTED`.
 - Failure reasons are structured as `{category, code, httpStatus}`. Provider text is never stored.
+
+## Providers (D-013, user decision 2026-11-06)
+
+```text
+delivery worker → existing receipt? → bounded fault decision → provider (mailhog | stub)
+```
+
+- **`mailhog`** (cluster): renders the stored template text into a plain-text email and sends it over SMTP to
+  `mailhog.mailhog.svc.cluster.local:1025`. An SMTP 250 is provider acceptance, so `DELIVERED` means accepted by
+  MailHog, not read by a person. The receipt has `provider=mailhog`, the Message-ID and the operator mailbox.
+- **`stub`**: writes the receipt only. Kept as a test double and fallback.
+
+| Notice | Mailbox |
+|---|---|
+| `ORDER_SHIPPED`, `SHIPMENT_DELAYED`, `SHIPMENT_FAILED` | `ops-fulfillment@box1.local` |
+| `ORDER_EXCEPTION`, `ORDER_REJECTED` | `ops-orders@box1.local` |
+
+Sender `box1-notifications@box1.local`; subject `[Box1] <Title> — <orderId>`; headers `X-Box1-Notification-Id`,
+`X-Box1-Notice-Type`, `X-Box1-Order-Id`, `X-Box1-Template-Version`. The body is the stored template text plus notice
+type, order, notification ID, template version and correlation ID. Header values come only from validated identifiers
+and a fixed title table; no event field can add a header or recipient.
+
+SMTP outcomes map onto the provider-neutral classes: connection failure → `PROVIDER_ERROR` and timeout →
+`PROVIDER_TIMEOUT` (both transient); an SMTP 4xx reply is recorded as 503 (`PROVIDER_UNAVAILABLE`, transient) and an
+SMTP 5xx reply as 422 (`PROVIDER_REJECTED`, permanent). No SMTP server text is kept.
 
 ## Outbox and events (D-005)
 
@@ -100,7 +128,11 @@ smallrye-jwt verifies issuer, signature, expiry and audience, then `ClientRoleAu
 
 Every `/api/v1` endpoint has `@RolesAllowed`, unannotated endpoints are denied, and the smoke paths are anonymous.
 
-## Stub fault control (D-009)
+## Delivery fault control (D-009)
+
+Faults act at the provider boundary, in front of whichever provider is configured: a failed attempt never reaches
+MailHog, and successful attempts still create real messages. The API is `/api/v1/delivery-faults`; `/api/v1/stub` is a
+deprecated alias with the same roles, bounds and audit. Table and setting names keep their v1 `stub` prefix.
 
 - **Modes:**
   - `TRANSIENT_503`;
@@ -118,7 +150,8 @@ Every `/api/v1` endpoint has `@RolesAllowed`, unannotated endpoints are denied, 
 
 ## Data and retention (D-010, D-012)
 
-All tables are new and owned by this service (Flyway `V1__notification_schema.sql`). Terminal notices with their
+All tables are owned by this service (Flyway `V1__notification_schema.sql`; `V2__smtp_receipts.sql` adds the
+receipt's `message_id` and `recipient`, both operator-only and NULL for the stub). Terminal notices with their
 attempts, sources and receipts are kept for 30 days, processed events for 30 days and published outbox rows for 7 days.
 No table, event, receipt, log line or metric label holds a customer identifier. The tests scan for a sentinel
 `customerId` sent in `order.placed.v1`.
@@ -139,7 +172,8 @@ No table, event, receipt, log line or metric label holds a customer identifier. 
 ## Limits
 
 - One replica. The design is safe with more (`SKIP LOCKED`, leases), but that is not tested.
-- No real provider exists. One would need a secret and approval.
+- The only real provider is MailHog, an in-cluster sink. An external email or SMS provider would need a secret and
+  approval.
 - The Kafka listener is plaintext with no client authentication. That is a platform limit, not addressed here.
 - A poisoned `order.placed.v1` record is copied unchanged to the DLQ, keeping order-topic data, including `customerId`,
   for 14 days instead of 7. This needs the user's explicit acceptance, or a shorter DLQ retention.

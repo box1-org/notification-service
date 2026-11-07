@@ -102,9 +102,23 @@ Event types the service does not know are **not** dead-lettered. They are acknow
 This was exercised on a local broker by `ReplayTest` (a misrouted event replayed once; garbage stayed dead-lettered;
 nothing produced to the shared topics). It has not been exercised on the cluster.
 
-## Stub fault control
+## MailHog mailbox
 
-Fault control is off in the deployment (`NOTIFY_STUB_FAULTS_ENABLED=false`, empty allowlist). Each of the following
+Notices arrive at <https://mailhog.apps.ocp.box1.org> (OpenShift login). To check one from a script:
+
+```sh
+curl -sS -H "Authorization: Bearer $(oc whoami -t)" \
+  'https://mailhog.apps.ocp.box1.org/api/v2/search?kind=containing&query=ntf_…'
+```
+
+The notice's `receipt.messageId` and `receipt.recipient` in `GET /api/v1/notifications` identify the message. If MailHog
+is down, deliveries are retried (transient) and end `FAILED`/`RETRIES_EXHAUSTED` after 6 attempts (about a minute);
+restore MailHog, and new facts deliver normally. To fall back to receipts only, set `NOTIFY_PROVIDER=stub` in
+box1-workloads-dev.
+
+## Delivery fault control
+
+Fault control is off unless enabled in the deployment (`NOTIFY_STUB_FAULTS_ENABLED`, allowlist). Each of the following
 needs the user's approval:
 
 - enabling it in the demo namespace the user names, through a workloads PR;
@@ -113,10 +127,11 @@ needs the user's approval:
 ```sh
 # 503 for the next 3 provider calls, ending after at most 120 s
 curl -X POST -H "Authorization: Bearer $FAULT_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"mode":"TRANSIENT_503","ttlSeconds":120,"failCount":3}' https://<route>/api/v1/stub/faults
-curl -H "Authorization: Bearer $TOKEN" https://<route>/api/v1/stub              # active fault and gate
-curl -X DELETE -H "Authorization: Bearer $FAULT_TOKEN" https://<route>/api/v1/stub/faults
-curl -H "Authorization: Bearer $FAULT_TOKEN" https://<route>/api/v1/stub/faults/audit
+  -d '{"mode":"TRANSIENT_503","ttlSeconds":120,"failCount":3}' https://<route>/api/v1/delivery-faults
+curl -H "Authorization: Bearer $TOKEN" https://<route>/api/v1/delivery-faults        # provider, active fault, gate
+curl -X DELETE -H "Authorization: Bearer $FAULT_TOKEN" https://<route>/api/v1/delivery-faults
+curl -H "Authorization: Bearer $FAULT_TOKEN" https://<route>/api/v1/delivery-faults/audit
+# /api/v1/stub, /api/v1/stub/faults and /api/v1/stub/faults/audit still work as deprecated aliases.
 ```
 
 - **Refusals:**
@@ -136,7 +151,8 @@ curl -H "Authorization: Bearer $FAULT_TOKEN" https://<route>/api/v1/stub/faults/
 | PostgreSQL down | Not ready; consumers hold their record, even through a shutdown, and it is redelivered after restart; no delivery | Restore the database pod; consumption resumes |
 | Kafka down | API and delivery continue; outbox grows; consumption pauses | Restore Kafka; the outbox drains |
 | Notice `FAILED` | Visible through the API with a structured reason | Fix the provider. There is no automatic re-send: a new fact makes a new notice |
-| Bad release | — | Revert the promotion commit in box1-workloads-dev (digest rollback). Flyway V1 creates new tables only |
+| MailHog down | Attempts fail as transient, then `FAILED`/`RETRIES_EXHAUSTED` | Restore MailHog (`oc -n mailhog get pods`), or set `NOTIFY_PROVIDER=stub` |
+| Bad release | — | Revert the promotion commit in box1-workloads-dev (digest rollback). Set `NOTIFY_PROVIDER=stub` first when rolling back to an image older than the MailHog provider: older images refuse `mailhog`. Flyway V2 only adds nullable columns and a provider check, which older images tolerate |
 
 ## Backup
 
