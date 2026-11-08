@@ -75,7 +75,7 @@ Contract tests fetch `box1-ops-contracts` at the commit pinned in `pom.xml` (`co
 
 A Quarkus REST service on OpenShift
 
-Owner: `user:default/mike4263`. Quarkus 3.40.1.1, Java 21, Maven 3.9.16.
+Owner: `user:default/mike`. Quarkus 3.40.1.1, Java 21, Maven 3.9.16.
 
 Optional integrations selected at creation: PostgreSQL = `false`, Kafka = `true`. PostgreSQL was added afterwards
 without a Secret in Git (see the runbook).
